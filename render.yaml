@@ -1,0 +1,88 @@
+services:
+  - type: web
+    name: investment-tracker-api
+    runtime: node
+    rootDir: .
+
+    # Render auto-sets PORT=10000; our app reads it via configuration.ts
+    buildCommand: pnpm install --frozen-lockfile && npx prisma generate --schema=./prisma/schema.prisma && pnpm --filter api build
+    startCommand: node apps/api/dist/main.js
+
+    # Runs before each deploy — applies pending migrations safely
+    preDeployCommand: npx prisma migrate deploy --schema=./prisma/schema.prisma
+
+    healthCheckPath: /api/v1/health
+
+    envVars:
+      # ── Set these in the Render dashboard (sync: false = not committed to git) ──
+
+      - key: NODE_ENV
+        value: production
+
+      # Neon connection string — copy from Neon dashboard → Connection Details → Pooled (recommended)
+      - key: DATABASE_URL
+        sync: false
+
+      # Generate with: node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+      - key: JWT_ACCESS_SECRET
+        sync: false
+
+      # Generate with same command above
+      - key: JWT_REFRESH_SECRET
+        sync: false
+
+      # MUST be exactly 32 ASCII characters — used for AES-256-GCM broker credential encryption
+      - key: ENCRYPTION_KEY
+        sync: false
+
+      # Your Vercel frontend URL (e.g. https://investment-tracker.vercel.app)
+      - key: FRONTEND_URL
+        sync: false
+
+      # Google OAuth — https://console.cloud.google.com → APIs → Credentials
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+
+      # Must match exactly: https://<your-render-service>.onrender.com/api/v1/auth/google/callback
+      - key: GOOGLE_CALLBACK_URL
+        sync: false
+
+      # Email (for password-reset) — use Gmail App Password or any SMTP relay
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+
+      - key: SMTP_PORT
+        value: "587"
+
+      - key: SMTP_USER
+        sync: false
+
+      - key: SMTP_PASS
+        sync: false
+
+      - key: SMTP_FROM
+        sync: false
+
+      # Market data
+      - key: YAHOO_FINANCE_ENABLED
+        value: "true"
+
+      - key: COINGECKO_ENABLED
+        value: "true"
+
+      - key: COINGECKO_API_KEY
+        sync: false
+
+      # Rate limiting
+      - key: THROTTLE_TTL
+        value: "60"
+
+      - key: THROTTLE_LIMIT
+        value: "100"
+
+      # Reduce noise in production logs
+      - key: LOG_LEVEL
+        value: warn

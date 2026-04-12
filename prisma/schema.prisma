@@ -1,0 +1,474 @@
+// Investment Tracker – Prisma Schema
+// PostgreSQL · Prisma ORM
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum AssetClass {
+  STOCK
+  CRYPTO
+  ETF
+  COMMODITY
+  BOND
+  REAL_ESTATE
+  FOREX
+  INDEX
+  OTHER
+}
+
+enum TransactionType {
+  BUY
+  SELL
+  DEPOSIT
+  WITHDRAWAL
+  FEE
+  DIVIDEND
+  TRANSFER_IN
+  TRANSFER_OUT
+  AIRDROP
+  REWARD
+  INTEREST
+  SPLIT
+}
+
+enum TransactionSource {
+  MANUAL
+  IMPORTED_CSV
+  BROKER_SYNC
+  EXCHANGE_SYNC
+}
+
+enum Currency {
+  USD
+  EUR
+  ILS
+  GBP
+  BTC
+  ETH
+}
+
+enum SyncStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  PARTIAL
+}
+
+enum BrokerType {
+  CRYPTO_EXCHANGE
+  STOCK_BROKER
+  BANK
+  CUSTOM
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+// ─── Users ────────────────────────────────────────────────────────────────────
+
+model User {
+  id                String   @id @default(cuid())
+  email             String   @unique
+  passwordHash      String
+  displayName       String?
+  role              UserRole @default(USER)
+  emailVerified     Boolean  @default(false)
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  settings          UserSettings?
+  portfolios        Portfolio[]
+  refreshTokens     RefreshToken[]
+  passwordResets    PasswordReset[]
+  brokerAccounts    BrokerAccount[]
+  auditLogs         AuditLog[]
+  watchlist         Watchlist?
+
+  @@map("users")
+}
+
+model UserSettings {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  baseCurrency     Currency @default(USD)
+  displayTimezone  String   @default("UTC")
+  autoRefreshMin   Int      @default(15) // minutes between auto price refresh
+  showSmallHoldings Boolean @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_settings")
+}
+
+model RefreshToken {
+  id          String   @id @default(cuid())
+  userId      String
+  token       String   @unique
+  expiresAt   DateTime
+  revoked     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  userAgent   String?
+  ipAddress   String?
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@map("refresh_tokens")
+}
+
+model PasswordReset {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@map("password_resets")
+}
+
+// ─── Portfolios ───────────────────────────────────────────────────────────────
+
+model Portfolio {
+  id           String   @id @default(cuid())
+  userId       String
+  name         String
+  description  String?
+  currency     Currency @default(USD)
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  holdings     Holding[]
+  transactions Transaction[]
+  snapshots    PortfolioSnapshot[]
+
+  @@index([userId])
+  @@map("portfolios")
+}
+
+// Daily snapshots of portfolio value for historical chart
+model PortfolioSnapshot {
+  id              String   @id @default(cuid())
+  portfolioId     String
+  snapshotDate    DateTime @db.Date
+  totalValue      Decimal  @db.Decimal(20, 8)
+  totalCost       Decimal  @db.Decimal(20, 8)
+  totalPnl        Decimal  @db.Decimal(20, 8)
+  currency        Currency
+  createdAt       DateTime @default(now())
+
+  portfolio       Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+
+  @@unique([portfolioId, snapshotDate])
+  @@index([portfolioId])
+  @@map("portfolio_snapshots")
+}
+
+// ─── Assets ───────────────────────────────────────────────────────────────────
+
+model Asset {
+  id             String     @id @default(cuid())
+  symbol         String
+  name           String
+  assetClass     AssetClass
+  exchange       String?    // NYSE, NASDAQ, Binance, etc.
+  currency       Currency   @default(USD)  // native trading currency
+  isin           String?    @unique
+  coingeckoId    String?    // for crypto
+  yahooSymbol    String?    // for Yahoo Finance
+  isActive       Boolean    @default(true)
+  logoUrl        String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  // Relations
+  holdings       Holding[]
+  transactions   Transaction[]
+  quotes         Quote[]
+  watchlistItems WatchlistItem[]
+
+  @@unique([symbol, exchange])
+  @@index([symbol])
+  @@index([assetClass])
+  @@map("assets")
+}
+
+// ─── Holdings ─────────────────────────────────────────────────────────────────
+
+// Holding = aggregated position per asset per portfolio
+// Recalculated from transactions
+model Holding {
+  id                 String   @id @default(cuid())
+  portfolioId        String
+  assetId            String
+  quantity           Decimal  @db.Decimal(28, 12)
+  averageBuyPrice    Decimal  @db.Decimal(20, 8)  // cost basis price per unit
+  totalCost          Decimal  @db.Decimal(20, 8)  // total invested (net)
+  realizedPnl        Decimal  @db.Decimal(20, 8)  @default(0)
+  brokerAccountId    String?  // null = manual or multiple accounts
+  lastCalculatedAt   DateTime @default(now())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  // Relations
+  portfolio          Portfolio    @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  asset              Asset        @relation(fields: [assetId], references: [id])
+  brokerAccount      BrokerAccount? @relation(fields: [brokerAccountId], references: [id])
+
+  @@unique([portfolioId, assetId])
+  @@index([portfolioId])
+  @@index([assetId])
+  @@map("holdings")
+}
+
+// ─── Transactions ─────────────────────────────────────────────────────────────
+
+model Transaction {
+  id              String            @id @default(cuid())
+  portfolioId     String
+  assetId         String?           // null for deposits/withdrawals
+  brokerAccountId String?
+  type            TransactionType
+  quantity        Decimal?          @db.Decimal(28, 12)
+  pricePerUnit    Decimal?          @db.Decimal(20, 8)  // in transaction currency
+  totalAmount     Decimal           @db.Decimal(20, 8)  // quantity * pricePerUnit
+  fee             Decimal           @db.Decimal(20, 8)  @default(0)
+  currency        Currency          @default(USD)
+  notes           String?
+  source          TransactionSource @default(MANUAL)
+  externalId      String?           // broker's own transaction ID
+  executedAt      DateTime          // when trade happened
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  // Relations
+  portfolio       Portfolio     @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  asset           Asset?        @relation(fields: [assetId], references: [id])
+  brokerAccount   BrokerAccount? @relation(fields: [brokerAccountId], references: [id])
+
+  @@index([portfolioId])
+  @@index([assetId])
+  @@index([executedAt])
+  @@map("transactions")
+}
+
+// ─── Market Data ─────────────────────────────────────────────────────────────
+
+// Latest quote per asset per provider
+model Quote {
+  id          String   @id @default(cuid())
+  assetId     String
+  provider    String   // yahoo, coingecko, alpha_vantage, mock
+  price       Decimal  @db.Decimal(20, 8)
+  priceChange Decimal? @db.Decimal(20, 8)  // 24h change absolute
+  changePercent Decimal? @db.Decimal(10, 4) // 24h change %
+  high24h     Decimal? @db.Decimal(20, 8)
+  low24h      Decimal? @db.Decimal(20, 8)
+  volume24h   Decimal? @db.Decimal(28, 8)
+  marketCap   Decimal? @db.Decimal(28, 8)
+  currency    Currency @default(USD)
+  fetchedAt   DateTime @default(now())
+
+  asset       Asset    @relation(fields: [assetId], references: [id])
+
+  @@unique([assetId, provider])
+  @@index([assetId])
+  @@map("quotes")
+}
+
+// ─── Currency Rates ───────────────────────────────────────────────────────────
+
+model CurrencyRate {
+  id         String   @id @default(cuid())
+  fromCurrency Currency
+  toCurrency  Currency
+  rate        Decimal  @db.Decimal(20, 8)
+  provider    String   @default("ecb")
+  fetchedAt   DateTime @default(now())
+
+  @@unique([fromCurrency, toCurrency])
+  @@map("currency_rates")
+}
+
+// ─── Broker Accounts ─────────────────────────────────────────────────────────
+
+model BrokerAccount {
+  id           String     @id @default(cuid())
+  userId       String
+  name         String
+  brokerType   BrokerType
+  brokerSlug   String     // "binance" | "interactive_brokers" | "etoro" | "custom"
+  isActive     Boolean    @default(true)
+  autoSync     Boolean    @default(false)
+  syncInterval Int        @default(60) // minutes
+  lastSyncedAt DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  // Relations
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  credentials       ExchangeCredential?
+  holdings          Holding[]
+  transactions      Transaction[]
+  syncJobs          SyncJob[]
+
+  @@index([userId])
+  @@map("broker_accounts")
+}
+
+// Credentials stored encrypted
+model ExchangeCredential {
+  id              String   @id @default(cuid())
+  brokerAccountId String   @unique
+  encryptedData   String   // JSON payload encrypted with AES-256-GCM
+  iv              String   // encryption IV
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  brokerAccount   BrokerAccount @relation(fields: [brokerAccountId], references: [id], onDelete: Cascade)
+
+  @@map("exchange_credentials")
+}
+
+// ─── Sync Jobs ────────────────────────────────────────────────────────────────
+
+model SyncJob {
+  id              String     @id @default(cuid())
+  brokerAccountId String
+  status          SyncStatus @default(PENDING)
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  errorMessage    String?
+  recordsImported Int        @default(0)
+  recordsSkipped  Int        @default(0)
+  createdAt       DateTime   @default(now())
+
+  brokerAccount   BrokerAccount @relation(fields: [brokerAccountId], references: [id], onDelete: Cascade)
+  logs            SyncLog[]
+
+  @@index([brokerAccountId])
+  @@map("sync_jobs")
+}
+
+model SyncLog {
+  id         String   @id @default(cuid())
+  syncJobId  String
+  level      String   // info | warn | error
+  message    String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  syncJob    SyncJob  @relation(fields: [syncJobId], references: [id], onDelete: Cascade)
+
+  @@index([syncJobId])
+  @@map("sync_logs")
+}
+
+// ─── Watchlist ────────────────────────────────────────────────────────────────
+
+model Watchlist {
+  id        String         @id @default(cuid())
+  userId    String         @unique
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items     WatchlistItem[]
+
+  @@map("watchlists")
+}
+
+model WatchlistItem {
+  id          String    @id @default(cuid())
+  watchlistId String
+  assetId     String
+  addedAt     DateTime  @default(now())
+
+  watchlist   Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+  asset       Asset     @relation(fields: [assetId], references: [id])
+
+  @@unique([watchlistId, assetId])
+  @@index([watchlistId])
+  @@map("watchlist_items")
+}
+
+// ─── News & Market Intelligence ──────────────────────────────────────────────
+
+enum NewsCategory {
+  FED_CENTRAL_BANKS
+  INFLATION_MACRO
+  EARNINGS
+  GEOPOLITICS
+  CRYPTO
+  MARKET_NEWS
+  REGULATORY
+}
+
+enum ImpactLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model NewsArticle {
+  id              String       @id @default(cuid())
+  title           String
+  summary         String
+  url             String       @unique
+  source          String
+  imageUrl        String?
+  category        NewsCategory
+  impactLevel     ImpactLevel
+  affectedMarkets String[]
+  affectedAssets  String[]
+  tags            String[]
+  publishedAt     DateTime
+  fetchedAt       DateTime     @default(now())
+
+  @@index([category])
+  @@index([impactLevel])
+  @@index([publishedAt])
+  @@map("news_articles")
+}
+
+// ─── Audit Log ────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String
+  action     String   // "LOGIN" | "REGISTER" | "DELETE_TRANSACTION" | etc.
+  entity     String?  // "Transaction" | "Portfolio" | etc.
+  entityId   String?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

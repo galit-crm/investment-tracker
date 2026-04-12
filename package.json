@@ -1,0 +1,34 @@
+{
+  "name": "investment-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"pnpm --filter api dev\" \"pnpm --filter web dev\"",
+    "build": "pnpm --filter shared build && pnpm --filter api build && pnpm --filter web build",
+    "db:migrate": "prisma migrate dev --schema=./prisma/schema.prisma",
+    "db:generate": "prisma generate --schema=./prisma/schema.prisma",
+    "db:seed": "ts-node prisma/seed.ts",
+    "db:studio": "prisma studio --schema=./prisma/schema.prisma",
+    "db:migrate:deploy": "prisma migrate deploy --schema=./prisma/schema.prisma",
+    "db:reset": "prisma migrate reset --schema=./prisma/schema.prisma"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "prisma": "5.22.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "dependencies": {
+    "@prisma/client": "5.22.0",
+    "@types/express": "^5.0.6",
+    "express": "^5.2.1"
+  }
+}
