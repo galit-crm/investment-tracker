@@ -85,7 +85,7 @@ export class AuthController {
     if (token) {
       await this.authService.logout(token);
     }
-    res.clearCookie(COOKIE_NAME);
+    res.clearCookie(COOKIE_NAME, this.cookieOptions());
   }
 
   @Post('forgot-password')
@@ -122,13 +122,20 @@ export class AuthController {
 
   // ─── Private ───────────────────────────────────────────────────────────────
 
+  private cookieOptions() {
+    return {
+      httpOnly: true,
+      secure: this.isProd,
+      // cross-domain (Vercel ↔ Render) requires 'none'; 'none' requires secure:true
+      sameSite: (this.isProd ? 'none' : 'lax') as 'none' | 'lax',
+      path: '/',
+    };
+  }
+
   private setRefreshCookie(res: Response, token: string) {
     res.cookie(COOKIE_NAME, token, {
-      httpOnly: true,
-      secure: this.isProd,          // HTTPS only in production
-      sameSite: this.isProd ? 'strict' : 'lax',
+      ...this.cookieOptions(),
       maxAge: this.cookieMaxAge,
-      path: '/',
     });
   }
 }

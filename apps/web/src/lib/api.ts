@@ -11,6 +11,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1
 export const api: AxiosInstance = axios.create({
   baseURL: API_URL,
   headers: { 'Content-Type': 'application/json' },
+  withCredentials: true,  // send cookies on cross-domain requests (Vercel → Render)
 });
 
 // Attach access token to every request
@@ -55,7 +56,7 @@ api.interceptors.response.use(
     const { refreshToken, setTokens, logout } = useAuthStore.getState();
 
     try {
-      const res = await axios.post(`${API_URL}/auth/refresh`, { refreshToken });
+      const res = await axios.post(`${API_URL}/auth/refresh`, { refreshToken }, { withCredentials: true });
       const { accessToken, refreshToken: newRefresh } = res.data.data;
 
       setTokens(accessToken, newRefresh);
